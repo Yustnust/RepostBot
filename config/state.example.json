@@ -1,0 +1,27 @@
+{
+  "_说明": "运行状态样例。由程序维护，请勿手工修改。首次上线前需为每家律所填入 last_published_at（可从 OA 招聘列表页抄录），否则会被判定为「从未发布」而立即触发一次重发。",
+  "version": 1,
+  "updated_at": "2026-09-27T09:00:00+08:00",
+  "accounts": {
+    "firm_a": {
+      "last_published_at": "2026-09-01T09:00:00+08:00",
+      "source": "page",
+      "last_run_at": "2026-09-27T09:00:00+08:00",
+      "last_status": "success",
+      "last_message": "重发成功，新发布时间 2026-09-27 09:00",
+      "fail_count": 0,
+      "history": [
+        { "at": "2026-09-01T09:00:00+08:00", "status": "success" }
+      ]
+    },
+    "firm_b": {
+      "last_published_at": "2026-09-05T10:12:00+08:00",
+      "source": "local",
+      "last_run_at": "2026-09-25T09:00:00+08:00",
+      "last_status": "success",
+      "last_message": "重发成功",
+      "fail_count": 0,
+      "history": []
+    }
+  }
+}

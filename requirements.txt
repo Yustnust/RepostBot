@@ -1,0 +1,10 @@
+# 本地开发依赖
+# 说明：云端镜像基于 mcr.microsoft.com/playwright/python，已内置 playwright 与浏览器，
+#       Dockerfile 中只安装 oss2 与短信 SDK。
+# 本机为 Python 3.14，不要锁死小版本，避免与已安装版本冲突
+playwright>=1.47
+python-dotenv>=1.0.1
+
+# 云端运行依赖
+oss2==2.18.4
+alibabacloud_dysmsapi20170525==3.1.0

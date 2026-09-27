@@ -1,0 +1,35 @@
+# ============ 敏感信息（绝不能提交） ============
+.env
+.env.*
+!.env.example
+
+# 真实账号配置与运行状态
+config/accounts.json
+config/state.json
+
+# 登录态 cookie（storage_state）
+.auth/
+
+# 勘察产物（含页面 HTML 与截图，可能含账号信息）
+recon_output/
+
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# ============ 工具 ============
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ============ 日志 ============
+*.log
