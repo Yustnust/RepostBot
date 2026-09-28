@@ -98,6 +98,9 @@ python src/index.py --firm firm_a --browser msedge --live
 
 # 登录态失效时重新生成
 python tools/recon.py --firm firm_a --browser msedge
+
+# 初始化阿里云 OSS 上的配置与状态（需先在 .env 填好 OSS 与 AccessKey）
+python tools/init_oss.py
 ```
 
 > `--browser msedge` 是必需的：Playwright 自带 Chromium 打不开该站点。

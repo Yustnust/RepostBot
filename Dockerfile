@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # 只装云端额外依赖；playwright 由基础镜像提供，重复安装可能覆盖镜像内的浏览器版本
 COPY requirements.txt .
-RUN pip install --no-cache-dir oss2==2.18.4 alibabacloud_dysmsapi20170525==3.1.0
+RUN pip install --no-cache-dir oss2==2.19.1 alibabacloud_dysmsapi20170525==3.1.0
 
 COPY src/ ./src/
 COPY config/ ./config/
