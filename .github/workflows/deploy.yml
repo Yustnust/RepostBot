@@ -1,0 +1,70 @@
+name: build-and-deploy
+
+# 推送到 main 时：构建镜像 -> 推送 ACR -> 更新阿里云 FC 函数镜像
+# 需要的 GitHub Secrets：
+#   ALIYUN_ACCESS_KEY_ID      RAM 子账号 AK（授权：ACR 推送 + FC 更新函数）
+#   ALIYUN_ACCESS_KEY_SECRET
+#   ACR_REGISTRY             例：registry.cn-shanghai.aliyuncs.com
+#   ACR_NAMESPACE            例：repostbot
+#   FC_REGION                例：cn-shanghai
+#   FC_FUNCTION_NAME         例：repostbot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 登录阿里云容器镜像服务
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          password: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+
+      - name: 构建并推送镜像
+        env:
+          IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/repostbot
+        run: |
+          # 同时打 latest 与 commit sha 两个标签，便于回滚
+          docker build -t $IMAGE:latest -t $IMAGE:${GITHUB_SHA::8} .
+          docker push $IMAGE:latest
+          docker push $IMAGE:${GITHUB_SHA::8}
+
+      - name: 更新阿里云 FC 函数镜像
+        env:
+          ALIBABA_CLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          ALIBABA_CLOUD_REGION_ID: ${{ secrets.FC_REGION }}
+          IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/repostbot
+        run: |
+          # 镜像推送后必须显式更新函数，FC 不会自动感知镜像变化
+          pip install --quiet alibabacloud-fc20230330==1.3.1
+          python - <<'PY'
+          import os
+          from alibabacloud_fc20230330.client import Client as FCClient
+          from alibabacloud_fc20230330 import models as fc_models
+          from alibabacloud_tea_openapi import models as open_api_models
+
+          cfg = open_api_models.Config(
+              access_key_id=os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"],
+              access_key_secret=os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"],
+          )
+          cfg.endpoint = f"{os.environ['ALIBABA_CLOUD_REGION_ID']}.fc.aliyuncs.com"
+          client = FCClient(cfg)
+          req = fc_models.UpdateFunctionRequest(
+              body=fc_models.UpdateFunctionInput(
+                  customContainerConfig=fc_models.CustomContainerConfig(
+                      image=os.environ["IMAGE"] + ":latest"
+                  )
+              )
+          )
+          resp = client.update_function(os.environ["FC_FUNCTION_NAME"], req)
+          print("函数已更新：", resp.body.function_name, resp.body.last_modified_time)
+          PY

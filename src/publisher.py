@@ -1,4 +1,4 @@
-"""阶段2：单账号发布流程。
+"""单账号发布流程。
 
 只做一件事：满 20 天时，点击「更新排序时间」把招聘信息顶上去。
 
@@ -10,10 +10,10 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     from playwright.sync_api import sync_playwright
@@ -107,21 +107,24 @@ def run(
     *,
     user: str = "",
     pwd: str = "",
-    storage: Path | str | None = None,
+    auth_state: str | None = None,
+    on_auth: Callable[[str], None] | None = None,
     dry_run: bool = True,
     headless: bool = True,
     browser: str = "chromium",
     timeout_ms: int = 60000,
     ignore_interval: bool = False,
+    trace_path: str | None = None,
 ) -> dict[str, Any]:
     """执行单个律所账号的置顶流程。
 
-    ignore_interval：仅供测试链路用，跳过 20 天判断，继续往下点击按钮。
-    与 dry_run 搭配使用才是安全的（点了也会取消弹窗）。
+    auth_state : 登录态 JSON 文本（由 storage 层提供）
+    on_auth    : 回写登录态的回调
+    ignore_interval : 仅供测试链路用，跳过 20 天判断（与 dry_run 搭配才安全）
+    trace_path : 记录网络请求，用于抓取「更新排序时间」的真实接口
 
     返回 dict：status ∈ {success, skipped, failed}
     """
-    storage = Path(storage) if storage else Path(f".auth/{firm_id}.json")
     result: dict[str, Any] = {
         "firm": firm_id,
         "status": "failed",
@@ -131,6 +134,7 @@ def run(
         "days_since": None,
         "dialog": None,
         "dry_run": dry_run,
+        "row_selected": False,
     }
 
     dialog_box: dict[str, str] = {}
@@ -155,8 +159,15 @@ def run(
             launch_kwargs["channel"] = browser
         br = p.chromium.launch(**launch_kwargs)
 
+        state = None
+        if auth_state:
+            try:
+                state = json.loads(auth_state)
+            except Exception:
+                state = None
+
         context = br.new_context(
-            storage_state=str(storage) if storage.exists() else None,
+            storage_state=state,
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
             viewport={"width": 1440, "height": 900},
@@ -164,6 +175,19 @@ def run(
         page = context.new_page()
         page.set_default_timeout(timeout_ms)
         page.on("dialog", on_dialog)
+
+        requests: list[dict[str, Any]] = []
+        if trace_path:
+            def on_request(req):
+                try:
+                    requests.append({
+                        "method": req.method,
+                        "url": req.url,
+                        "post_data": req.post_data,
+                    })
+                except Exception:
+                    pass
+            page.on("request", on_request)
 
         try:
             page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
@@ -173,8 +197,8 @@ def run(
                     page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
                 if _is_login_page(page.url):
                     result["message"] = (
-                        "登录态失效且自动登录失败。请重新运行 "
-                        "python tools/recon.py --firm %s 手动登录后刷新 .auth 文件" % firm_id
+                        f"登录态失效且自动登录失败（firm={firm_id}）。"
+                        f"本机请运行 python tools/recon.py --firm {firm_id} 重新生成登录态"
                     )
                     return result
 
@@ -186,8 +210,8 @@ def run(
 
             target = pick_target(rows)
             if not target:
-                result["message"] = "没有状态为「招聘中」的招聘信息，跳过"
                 result["status"] = "skipped"
+                result["message"] = "没有状态为「招聘中」的招聘信息，跳过"
                 return result
 
             sort_dt = parse_sort_time(target["sort_time_text"])
@@ -212,8 +236,7 @@ def run(
             # 选中目标行（即使按钮不依赖选中，也先选上，保证作用于正确的岗位）
             page.locator(S.GRID_ROW).nth(target["index"]).click()
             page.wait_for_timeout(500)
-            selected = page.locator(S.GRID_ROW_SELECTED).count()
-            result["row_selected"] = selected > 0
+            result["row_selected"] = page.locator(S.GRID_ROW_SELECTED).count() > 0
 
             page.locator(S.BTN_UPDATE_SORT_TIME).first.click(timeout=15000)
             page.wait_for_timeout(1500)
@@ -239,14 +262,18 @@ def run(
             else:
                 result["status"] = "failed"
                 result["message"] = "已确认但排序时间未变化，请人工复核"
-
-            context.storage_state(path=str(storage))
         except Exception as e:  # noqa: BLE001
             result["message"] = f"执行异常：{type(e).__name__}: {e}"
         finally:
-            if not dry_run:
+            try:
+                if on_auth:
+                    on_auth(json.dumps(context.storage_state(), ensure_ascii=False))
+            except Exception:
+                pass
+            if trace_path and requests:
                 try:
-                    context.storage_state(path=str(storage))
+                    with open(trace_path, "w", encoding="utf-8") as f:
+                        json.dump(requests, f, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
             br.close()
