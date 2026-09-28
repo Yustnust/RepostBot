@@ -67,11 +67,16 @@ def process_account(account: dict, store: storage_mod.Storage, *, dry_run: bool,
     except Exception as e:  # noqa: BLE001
         result["state_error"] = f"{type(e).__name__}: {e}"
 
-    # 发回执
-    try:
-        result["notify"] = notify_result(result, account)
-    except Exception as e:  # noqa: BLE001
-        result["notify_error"] = f"{type(e).__name__}: {e}"
+    # 发回执：只在「成功」或「失败」时通知客户。
+    # 「未到期跳过」每天都会发生，若也发邮件 = 每天一封骚扰邮件。
+    if result.get("status") in ("success", "failed"):
+        try:
+            result["notify"] = notify_result(result, account)
+        except Exception as e:  # noqa: BLE001
+            result["notify_error"] = f"{type(e).__name__}: {e}"
+    else:
+        log.info("[回执] firm=%s 状态=%s，不发送回执（避免每日骚扰）",
+                 firm_id, result.get("status"))
 
     return result
 
