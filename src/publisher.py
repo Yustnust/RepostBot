@@ -58,8 +58,13 @@ def _is_login_page(url: str) -> bool:
     return any(m in url for m in S.LOGIN_URL_MARKERS)
 
 
-def _try_login(page, user: str, pwd: str) -> bool:
-    """登录态失效时的兜底登录"""
+def _try_login(page, user: str, pwd: str, timeout_ms: int = 20000) -> bool:
+    """在当前页面尝试填表登录（页面需已停在登录页）"""
+    # 登录页加载较慢（站点部分静态资源被墙），先等表单出现再填
+    try:
+        page.wait_for_selector(S.LOGIN_USERNAME, timeout=timeout_ms)
+    except Exception:
+        pass
     filled = 0
     for sel in S.LOGIN_USERNAME_CANDIDATES:
         loc = page.locator(sel).first
@@ -78,10 +83,84 @@ def _try_login(page, user: str, pwd: str) -> bool:
     for sel in S.LOGIN_SUBMIT_CANDIDATES:
         loc = page.locator(sel).first
         if loc.count() and loc.is_visible():
-            loc.click(timeout=3000)
-            page.wait_for_load_state("domcontentloaded", timeout=20000)
+            try:
+                _click(loc, timeout=8000)   # 被遮罩拦截时自动退化为 JS 点击
+            except Exception:
+                continue
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=20000)
+            except Exception:
+                pass
+            page.wait_for_timeout(1500)
             return True
     return False
+
+
+def _goto_manager(page, timeout_ms: int) -> bool:
+    """尝试进入招聘管理页；未登录时站点会中断导航（ERR_ABORTED），此处不抛异常"""
+    try:
+        page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+        return True
+    except Exception:
+        return False
+
+
+def _manager_ready(page, timeout_ms: int) -> bool:
+    """进入招聘管理页并确认列表已渲染"""
+    if not _goto_manager(page, timeout_ms):
+        return False
+    if _is_login_page(page.url):
+        return False
+    try:
+        page.wait_for_selector(S.GRID_ROW, timeout=min(timeout_ms, 20000))
+        return True
+    except Exception:
+        return False
+
+
+def ensure_login(page, user: str, pwd: str, timeout_ms: int) -> tuple[bool, str]:
+    """保证进入招聘管理页。先试复用登录态，失败则依次尝试两个登录页。"""
+    if _manager_ready(page, timeout_ms):
+        return True, "复用登录态"
+
+    if not (user and pwd):
+        return False, "登录态失效，且未配置账号密码（OA_USER / OA_PASS）"
+
+    # 实测（2026-09-28）：OA 登录页的会话不覆盖 recruitment 子域，
+    # 生效的是统一登录页 openid/login.jsp，故把它排在最前
+    for url in (S.OPENID_LOGIN_URL, S.LOGIN_URL):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        except Exception:
+            continue
+        page.wait_for_timeout(1000)
+        if not _try_login(page, user, pwd):
+            continue
+        page.wait_for_timeout(1500)
+        if _manager_ready(page, timeout_ms):
+            return True, f"自动登录成功（{url}）"
+
+    return False, "自动登录失败：两个登录页均未成功，请人工检查账号密码或重新生成登录态"
+
+
+def _wait_ready(page, timeout_ms: int = 15000) -> None:
+    """等待 ExtJS 的加载遮罩 #loading 消失；等不到也不阻塞（点击时有 JS 兜底）"""
+    try:
+        page.wait_for_function(
+            "() => { const el = document.getElementById('loading');"
+            " return !el || el.offsetParent === null; }",
+            timeout=timeout_ms,
+        )
+    except Exception:
+        pass
+
+
+def _click(locator, timeout: int = 10000) -> None:
+    """点击元素；被遮罩拦截时退化为 JS 点击（直接派发到元素，不受遮罩影响）"""
+    try:
+        locator.first.click(timeout=timeout)
+    except Exception:
+        locator.first.evaluate("el => el.click()")
 
 
 def scan_rows(page) -> list[dict[str, Any]]:
@@ -206,19 +285,16 @@ def run(
             page.on("request", on_request)
 
         try:
-            page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-
-            if _is_login_page(page.url):
-                log.warning("[登录页] firm=%s 登录态失效，尝试账号密码兜底", firm_id)
-                if user and pwd and _try_login(page, user, pwd):
-                    page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
-                if _is_login_page(page.url):
-                    result["message"] = (
-                        f"登录态失效且自动登录失败（firm={firm_id}）。"
-                        f"本机请运行 python tools/recon.py --firm {firm_id} 重新生成登录态"
-                    )
-                    log.error("[结束] firm=%s %s", firm_id, result["message"])
-                    return result
+            ok, login_note = ensure_login(page, user, pwd, timeout_ms)
+            result["login"] = login_note
+            if not ok:
+                result["message"] = (
+                    f"{login_note}（firm={firm_id}）。"
+                    f"本机可运行 python tools/recon.py --firm {firm_id} 重新生成登录态"
+                )
+                log.error("[结束] firm=%s %s", firm_id, result["message"])
+                return result
+            log.info("[登录] firm=%s %s", firm_id, login_note)
 
             page.wait_for_selector(S.GRID_ROW, timeout=timeout_ms)
             rows = scan_rows(page)
@@ -258,12 +334,13 @@ def run(
             if days < S.REPOST_INTERVAL_DAYS:
                 result["message"] = f"（测试模式：距上次置顶仅 {days} 天，仍继续验证链路）"
 
+            _wait_ready(page)
             # 选中目标行（即使按钮不依赖选中，也先选上，保证作用于正确的岗位）
-            page.locator(S.GRID_ROW).nth(target["index"]).click()
+            _click(page.locator(S.GRID_ROW).nth(target["index"]))
             page.wait_for_timeout(500)
             result["row_selected"] = page.locator(S.GRID_ROW_SELECTED).count() > 0
 
-            page.locator(S.BTN_UPDATE_SORT_TIME).first.click(timeout=15000)
+            _click(page.locator(S.BTN_UPDATE_SORT_TIME), timeout=15000)
             page.wait_for_timeout(1500)
             result["dialog"] = dialog_box or None
 

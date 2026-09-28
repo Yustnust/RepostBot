@@ -52,23 +52,35 @@ BTN_UPDATE_SORT_TIME = 'button:has-text("更新排序时间")'   # ★ 核心动
 BTN_SYNC_COMPANY = 'button:has-text("同步招聘单位信息")'
 BTN_REFRESH = 'button:has-text("刷新")'
 
-# ---------------------------------------------------------------- 登录兜底
+# ---------------------------------------------------------------- 登录
 
-# 登录态复用失败时才走账号密码登录。OA 登录页输入框的真实选择器尚未逐一确认，
-# 这里保留候选列表逐个尝试，确认后收敛为单个值。
+# 2026-09-28 勘察确认（recon_output/20260928_120759/step_01）
+# 登录页：https://oa.lawyers.org.cn/login.jsp（Spring Security 表单）
+#   <input type=text     name=j_username id=j_username placeholder="请输入用户名">
+#   <input type=password name=j_password id=j_password placeholder="密码">
+#   <button class="btn btn-success btn-block">登录</button>
+LOGIN_URL = "https://oa.lawyers.org.cn/login.jsp"
+OPENID_LOGIN_URL = "https://www.lawyers.org.cn/openid/login.jsp"  # 招聘后台的单点登录入口
+
+LOGIN_USERNAME = "#j_username"
+LOGIN_PASSWORD = "#j_password"
+LOGIN_SUBMIT = "button.btn.btn-success.btn-block"
+
+# 登录态失效时才走账号密码登录：先试上面确认过的，不行再逐个兜底
 LOGIN_USERNAME_CANDIDATES = [
-    'input[name="username"]', 'input[name="user"]', 'input[name="loginName"]',
-    'input[name="account"]', 'input[name="j_username"]', 'input#username',
-    'input#user', 'input[type="text"]',
+    LOGIN_USERNAME,
+    'input[name="j_username"]', 'input[name="username"]', 'input#username',
+    'input[type="text"]',
 ]
 LOGIN_PASSWORD_CANDIDATES = [
-    'input[name="password"]', 'input[name="pass"]', 'input[name="j_password"]',
-    'input#password', 'input[type="password"]',
+    LOGIN_PASSWORD,
+    'input[name="j_password"]', 'input[name="password"]', 'input#password',
+    'input[type="password"]',
 ]
 LOGIN_SUBMIT_CANDIDATES = [
-    'button[type="submit"]', 'input[type="submit"]',
-    'button:has-text("登录")', 'a:has-text("登录")',
-    'input[value="登录"]', 'text=登录',
+    LOGIN_SUBMIT,
+    'button:has-text("登录")', 'button[type="submit"]', 'input[type="submit"]',
+    'text=登录',
 ]
 # URL 中出现这些关键字即判定为「未登录」
 LOGIN_URL_MARKERS = ("login.jsp", "passport", "loginSuccessUrl")
