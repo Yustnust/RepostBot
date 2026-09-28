@@ -22,7 +22,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
 import publisher  # noqa: E402
 import storage as storage_mod  # noqa: E402
+import logger  # noqa: E402
 from notifier import notify_exception, notify_result  # noqa: E402
+
+log = logger.get_logger()
 
 
 def _dry_run_default(cli_live: bool) -> bool:
@@ -37,6 +40,7 @@ def process_account(account: dict, store: storage_mod.Storage, *, dry_run: bool,
                     trace_path: str | None) -> dict:
     firm_id = account.get("id", "default")
     if account.get("enabled") is False:
+        log.info("[跳过] firm=%s 账号已停用", firm_id)
         return {"firm": firm_id, "status": "skipped", "message": "账号已停用"}
 
     user = config.resolve_ref(account.get("oa_user_ref", "env:OA_USER"))
@@ -80,9 +84,11 @@ def run_all(*, dry_run: bool, headless: bool, browser: str, force: bool,
         accounts = [a for a in accounts if a.get("id") == only]
 
     if not accounts:
+        log.error("[运行] 没有可用账号：请配置 config/accounts.json 或 OSS 上的 accounts.json")
         return [{"firm": "-", "status": "failed",
                  "message": "没有可用账号：请配置 config/accounts.json 或 OSS 上的 accounts.json"}]
 
+    log.info("[运行] 开始处理 %s 个账号 dry_run=%s", len(accounts), dry_run)
     results = []
     for account in accounts:
         results.append(process_account(
@@ -131,13 +137,14 @@ def main() -> int:
         only=args.firm,
     )
 
-    print("\n" + "=" * 60)
-    print(json.dumps(results, ensure_ascii=False, indent=2))
-    print("=" * 60)
+    # 控制台汇总（同时日志文件也会记录，见 src/logger.py）
+    log.info("=" * 60)
+    log.info("运行结果：\n%s", json.dumps(results, ensure_ascii=False, indent=2))
+    log.info("=" * 60)
 
     # 注意：Windows 控制台可能是 GBK，不要用 emoji，否则 UnicodeEncodeError
     for r in results:
-        print(f"[{r.get('status')}] {r.get('firm')}: {r.get('message')}")
+        log.info("[%s] %s: %s", r.get("status"), r.get("firm"), r.get("message"))
     return 0 if all(r.get("status") in ("success", "skipped") for r in results) else 1
 
 

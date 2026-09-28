@@ -1,5 +1,7 @@
 # RepostBot
 
+> ⚠️ **v1 范围：本仓库当前仅服务「上海臻至律师事务所」一家客户（`firm_a`）。** 多账号能力已通过 `config/accounts.json` 的数组结构预留，但暂不实现。
+
 东方律师网招聘信息「20 天自动重发置顶」机器人。
 
 ## 它做什么
@@ -12,11 +14,11 @@
 
 支持多家律所（多账号），各自独立计时；完成后通过邮件 / 短信回执。
 
-> 完整设计见 [`项目方案.md`](./项目方案.md)。开始动手前请先读它的 §0 一页速览。
+> 完整设计见 [`项目方案.md`](项目方案.md)。阶段进度以 [`docs/进度对账.md`](docs/进度对账.md) 为准（已统一 README 与方案里不一致的阶段表）。开始动手前请先读它的 §0 一页速览。
 
 ## 快速上手（本地）
 
-```powershell
+```
 # 1. 安装依赖
 pip install -r requirements.txt
 
@@ -31,8 +33,7 @@ Copy-Item .env.example .env
 python tools/recon.py
 ```
 
-勘察产物输出在 `recon_output/<时间戳>/`，含页面 HTML、截图、表单元素清单、表格清单。
-把结果填进 `docs/页面结构.md` 的勘察清单，再据此填充 `src/selectors.py`。
+勘察产物输出在 `recon_output/<时间戳>/`，含页面 HTML、截图、表单元素清单、表格清单。 把结果填进 `docs/页面结构.md` 的勘察清单，再据此填充 `src/selectors.py`。
 
 ## 目录结构
 
@@ -49,14 +50,17 @@ python tools/recon.py
 │   ├── publisher.py         # 核心发布流程
 │   ├── page_selectors.py    # 所有页面选择器（页面改版只改这里）
 │   ├── storage.py           # 存储：本地文件 / 阿里云 OSS
+│   ├── logger.py            # 统一日志（控制台 + logs/repostbot.log）
 │   └── notifier/            # 邮件 + 短信回执
 ├── tools/
 │   └── recon.py             # 阶段1 勘察工具
+├── tests/                   # 纯逻辑单测（python -m unittest discover -s tests）
 ├── .github/workflows/       # push main → 构建镜像 → 部署 FC
 └── docs/
     ├── 页面结构.md           # 页面结构与选择器
     ├── 阶段1-2总结.md        # 已完成工作的总结与踩坑记录
-    └── 部署手册.md           # 阿里云 FC 部署步骤
+    ├── 部署手册.md           # 阿里云 FC 部署步骤
+    └── 进度对账.md           # 阶段进度权威状态表（README 与方案冲突以它为准）
 ```
 
 ## 安全约定
@@ -65,25 +69,24 @@ python tools/recon.py
 - `config/accounts.json`、`config/state.json`、`.env`、`.auth/`、`recon_output/` 均已被 `.gitignore` 排除。
 - 提交前用 `git status` 确认没有敏感文件被跟踪。
 
-## 实施阶段
+## 实施阶段（统一口径，详见 [docs/进度对账.md](docs/进度对账.md)）
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 0 | 仓库基建 | ✅ 完成 |
-| 1 | 本地勘察页面结构 | ✅ 完成 |
-| 2 | 单账号跑通（dry-run） | ✅ 完成（真实发布待 2026-10-14 后验证） |
-| 3 | 单账号稳定运行：状态记录 + 运行日志 + 邮件回执 + 每天定时 | ⬜ 下一步 |
-| 4 | （暂缓）多账号调度 —— 等客户增多再做 | ⏸ |
-| 5 | 上云部署（本机计划任务 / 阿里云 FC，待定） | ⬜ |
-| 6 | 试运行观察（首个可实测日期 2026-10-14） | ⬜ |
+| 0 仓库基建 | 目录 / .gitignore / 样例 / 依赖 / README | ✅ 完成 |
+| 1 本地勘察页面结构 | `page_selectors.py` + `页面结构.md` | ✅ 完成 |
+| 2 单账号跑通（dry-run） | `publisher.py` 全链路 | ✅ 完成（真实发布待 2026-10-14 后验证） |
+| 3 状态存储 | `storage.py`（本地 + OSS、状态记录、失败自动停用） | ✅ 完成 |
+| 3 多账号调度 | 限流 / 排序 / 串行（单客户暂不需要） | ⏸ 暂缓 |
+| 4 邮件 / 短信回执 | `notifier/` | ✅ 完成（代码已写） |
+| 5 容器化 + FC 上线 | `Dockerfile` / `deploy.yml` / 部署手册 | ⚠️ 半个（FC 运行需配 AK） |
+| 6 试运行观察 | 首个可实测日期 2026-10-14 | ⬜ |
 
-> **v1 范围：仅服务「上海臻至律师事务所」一家客户。** 多账号能力已通过 `accounts.json` 结构预留，暂不实现。
-
-> **改代码前请先读 [`docs/阶段1-2总结.md`](docs/阶段1-2总结.md)**：那里记着所有踩过的坑和定下的约定。
+> **v1 仅服务「上海臻至律师事务所」一家客户。** 多账号能力已通过 `accounts.json` 结构预留，暂不实现。
 
 ## 常用命令
 
-```powershell
+```
 # 常规运行（默认 dry-run，不会真提交）
 python src/index.py --firm firm_a --browser msedge
 
@@ -98,3 +101,8 @@ python tools/recon.py --firm firm_a --browser msedge
 ```
 
 > `--browser msedge` 是必需的：Playwright 自带 Chromium 打不开该站点。
+
+## 运行日志
+
+每次运行会同时输出到控制台和 `logs/repostbot.log`（`logs/` 已被 .gitignore 排除，不会误提交）。
+日志含每账号的「距上次置顶 N 天」判断、点击/弹窗动作、成功/失败结论，便于回溯与排查。

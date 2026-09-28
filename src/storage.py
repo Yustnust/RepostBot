@@ -5,6 +5,9 @@
   - OSSStorage ：阿里云 FC 用（FC 容器无本地持久化，必须走 OSS）
 
 对外只暴露 get_storage()，业务代码不感知底层。将来换 Tablestore/RDS 也只改本文件。
+
+> v1 范围：本仓库当前仅服务「上海臻至律师事务所」一家客户（firm_a）。
+> 多账号能力已通过 accounts.json 的数组结构预留，但暂不实现。
 """
 
 from __future__ import annotations

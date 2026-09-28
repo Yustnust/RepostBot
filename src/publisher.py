@@ -21,6 +21,9 @@ except ImportError:
     sys.exit("未安装 playwright：pip install -r requirements.txt && playwright install chromium")
 
 import page_selectors as S
+import logger
+
+log = logger.get_logger()
 
 CST = timezone(timedelta(hours=8))
 
@@ -38,6 +41,17 @@ def parse_sort_time(text: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def should_repost(sort_dt: datetime, now: datetime | None = None,
+                  interval_days: int = S.REPOST_INTERVAL_DAYS) -> bool:
+    """是否已满置顶间隔（纯逻辑，便于单测）。
+
+    - 满 interval_days 天（含）即视为到期；
+    - 差一分钟都不算，避免边界日提前消耗 20 天机会。
+    """
+    now = now or now_cst()
+    return (now - sort_dt).days >= interval_days
 
 
 def _is_login_page(url: str) -> bool:
@@ -137,6 +151,8 @@ def run(
         "row_selected": False,
     }
 
+    log.info("[开始] firm=%s dry_run=%s", firm_id, dry_run)
+
     dialog_box: dict[str, str] = {}
 
     def on_dialog(dialog):
@@ -193,6 +209,7 @@ def run(
             page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
 
             if _is_login_page(page.url):
+                log.warning("[登录页] firm=%s 登录态失效，尝试账号密码兜底", firm_id)
                 if user and pwd and _try_login(page, user, pwd):
                     page.goto(S.RECRUIT_MANAGER_URL, wait_until="domcontentloaded", timeout=timeout_ms)
                 if _is_login_page(page.url):
@@ -200,28 +217,35 @@ def run(
                         f"登录态失效且自动登录失败（firm={firm_id}）。"
                         f"本机请运行 python tools/recon.py --firm {firm_id} 重新生成登录态"
                     )
+                    log.error("[结束] firm=%s %s", firm_id, result["message"])
                     return result
 
             page.wait_for_selector(S.GRID_ROW, timeout=timeout_ms)
             rows = scan_rows(page)
             if not rows:
                 result["message"] = "列表为空，未找到任何招聘行"
+                log.warning("[结束] firm=%s %s", firm_id, result["message"])
                 return result
 
             target = pick_target(rows)
             if not target:
                 result["status"] = "skipped"
                 result["message"] = "没有状态为「招聘中」的招聘信息，跳过"
+                log.info("[结束] firm=%s %s", firm_id, result["message"])
                 return result
 
             sort_dt = parse_sort_time(target["sort_time_text"])
             result["sort_time_before"] = target["sort_time_text"]
             if not sort_dt:
                 result["message"] = f"无法解析排序时间：{target['sort_time_text']!r}"
+                log.error("[结束] firm=%s %s", firm_id, result["message"])
                 return result
 
             days = (now_cst() - sort_dt).days
             result["days_since"] = days
+
+            log.info("[判断] firm=%s 距上次置顶 %s 天，阈值 %s",
+                     firm_id, days, S.REPOST_INTERVAL_DAYS)
 
             if days < S.REPOST_INTERVAL_DAYS and not ignore_interval:
                 result["status"] = "skipped"
@@ -229,6 +253,7 @@ def run(
                     f"距上次置顶仅 {days} 天，未满 {S.REPOST_INTERVAL_DAYS} 天，跳过"
                     f"（下次可执行：{sort_dt + timedelta(days=S.REPOST_INTERVAL_DAYS):%Y-%m-%d}）"
                 )
+                log.info("[结束] firm=%s %s", firm_id, result["message"])
                 return result
             if days < S.REPOST_INTERVAL_DAYS:
                 result["message"] = f"（测试模式：距上次置顶仅 {days} 天，仍继续验证链路）"
@@ -245,10 +270,12 @@ def run(
             if dry_run:
                 result["status"] = "skipped"
                 result["message"] = "dry-run：已点击按钮并捕获确认框，按要求取消，未真正置顶"
+                log.info("[结束] firm=%s %s", firm_id, result["message"])
                 return result
 
             if dialog_box.get("action") != "accept":
                 result["message"] = f"未获得预期的确认框，已放弃：{dialog_box}"
+                log.error("[结束] firm=%s %s", firm_id, result["message"])
                 return result
 
             # 刷新后复核排序时间是否更新
@@ -259,11 +286,14 @@ def run(
             if after and after["sort_time_text"] != target["sort_time_text"]:
                 result["status"] = "success"
                 result["message"] = f"置顶成功，排序时间更新为 {after['sort_time_text']}"
+                log.info("[结束] firm=%s %s", firm_id, result["message"])
             else:
                 result["status"] = "failed"
                 result["message"] = "已确认但排序时间未变化，请人工复核"
+                log.error("[结束] firm=%s %s", firm_id, result["message"])
         except Exception as e:  # noqa: BLE001
             result["message"] = f"执行异常：{type(e).__name__}: {e}"
+            log.exception("[异常] firm=%s %s", firm_id, result["message"])
         finally:
             try:
                 if on_auth:

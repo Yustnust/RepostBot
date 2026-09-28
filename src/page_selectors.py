@@ -21,7 +21,7 @@ RECRUIT_MANAGER_URL = "https://recruitment.lawyers.org.cn/manager/index.jsp"
 
 GRID_ROW = "div.x-grid3-row"                     # 每一行
 GRID_ROW_SELECTED = "div.x-grid3-row-selected"   # 被选中的行（ExtJS 自动加的 class）
-GRID_CELL = "td.x-grid3-cell"                    # 行内单元格
+GRID_CELL = "td.x-grid3-td"                      # 行内单元格
 
 # 列顺序（0 起）：招聘标题/CompanyID/招聘单位/发布日期/结束日期/最新更新/排序时间/招聘岗位/招聘人数/状态
 COL_TITLE = "td.x-grid3-td-0"
