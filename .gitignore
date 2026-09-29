@@ -3,6 +3,12 @@
 .env.*
 !.env.example
 
+# 云厂商密钥资料（明文 AccessKey 及截图，切勿提交）
+AccessKey.csv
+RAM_Access.png
+*AccessKey*.csv
+*AccessKey*.png
+
 # 真实账号配置与运行状态
 config/accounts.json
 config/state.json
