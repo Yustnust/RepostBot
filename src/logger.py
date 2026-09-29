@@ -10,10 +10,21 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _LOGGER_NAME = "repostbot"
 _LOG_FILE = "repostbot.log"
+
+# 统一时区：本机 Python 进程可能拿到 UTC，导致日志时间戳与实际差 8 小时。
+# 强制所有日志时间戳使用北京时间（与 FC 容器内的 TZ=Asia/Shanghai 一致）。
+CST = timezone(timedelta(hours=8))
+
+
+def _cst_converter(seconds: float | None = None):
+    ts = seconds if seconds is not None else time.time()
+    return datetime.fromtimestamp(ts, CST).timetuple()
 
 
 def get_logger(name: str = _LOGGER_NAME) -> logging.Logger:
@@ -26,6 +37,7 @@ def get_logger(name: str = _LOGGER_NAME) -> logging.Logger:
         "%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    fmt.converter = _cst_converter
 
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
