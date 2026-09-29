@@ -4,7 +4,11 @@
   1. 阿里云账号已企业实名认证
   2. 短信签名已审核通过        -> SMS_SIGN_NAME
   3. 短信模板已审核通过        -> SMS_TEMPLATE_CODE
-建议模板：您的招聘信息已于${time}在东方律师网完成置顶更新，下次可更新时间为${nexttime}
+凭证来源（两种，自动识别）：
+  1. 长期 AccessKey      -> 环境变量 ALIBABA_CLOUD_ACCESS_KEY_ID / SECRET（本机、CI）
+  2. RAM 角色临时凭证 STS -> 额外有 ALIBABA_CLOUD_SECURITY_TOKEN（**阿里云 FC 推荐**，
+                            给函数绑定 RAM 角色后由运行时自动注入，凭证自动轮换，
+                            无需在代码或配置里保存任何 AK）
 """
 
 from __future__ import annotations
@@ -35,6 +39,11 @@ def send(phone: str, params: dict) -> tuple[bool, str]:
 
     try:
         cfg = open_api_models.Config(access_key_id=ak, access_key_secret=sk)
+        # 阿里云 FC 绑定 RAM 角色后，运行时会注入 ALIBABA_CLOUD_SECURITY_TOKEN，
+        # 此时必须使用 STS 临时凭证，否则调用会被拒绝
+        token = config.env("ALIBABA_CLOUD_SECURITY_TOKEN")
+        if token:
+            cfg.security_token = token
         cfg.endpoint = "dysmsapi.aliyuncs.com"
         client = DysmsClient(cfg)
         req = dysms_models.SendSmsRequest(
