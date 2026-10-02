@@ -83,14 +83,20 @@ def build_accounts(firm_id: str, firm_name: str) -> dict:
     if local.exists():
         print(f"使用本地已有配置：{local}")
         return json.loads(local.read_text(encoding="utf-8"))
+
+    # 单账号场景下 .env 里通常只有 OA_USER / OA_PASS，优先用它们；
+    # 多账号时才用 <FIRM>_OA_USER 这种按律所区分的变量名
+    user_ref = "env:OA_USER" if config.env("OA_USER") else f"env:{firm_id.upper()}_OA_USER"
+    pass_ref = "env:OA_PASS" if config.env("OA_PASS") else f"env:{firm_id.upper()}_OA_PASS"
+
     return {
         "version": 1,
         "accounts": [{
             "id": firm_id,
             "name": firm_name or "上海臻至律师事务所",
             "enabled": True,
-            "oa_user_ref": f"env:{firm_id.upper()}_OA_USER",
-            "oa_pass_ref": f"env:{firm_id.upper()}_OA_PASS",
+            "oa_user_ref": user_ref,
+            "oa_pass_ref": pass_ref,
             "notify": {
                 "email": config.env("NOTIFY_EMAIL"),
                 "phone": config.env("NOTIFY_PHONE"),
