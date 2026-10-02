@@ -15,6 +15,12 @@ from notifier import email as email_notifier
 from notifier import sms as sms_notifier
 
 
+def _short(text: str | None, limit: int = 20) -> str:
+    """短信模板变量有长度限制，超长会被拒，这里做截断"""
+    text = (text or "").strip().replace("\n", " ")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _next_due(result: dict) -> str | None:
     """根据本次排序时间推算下次可置顶日期"""
     text = result.get("sort_time_after") or result.get("sort_time_before")
@@ -67,6 +73,21 @@ def notify_result(result: dict, account: dict) -> dict:
             out["admin_email"] = email_notifier.send(
                 f"[告警] {firm_name} 置顶失败，需人工处理", html, admin
             )
+        # 管理员同时收短信：邮件可能没人及时看，失败需要第一时间处理
+        admin_phone = config.env("ADMIN_PHONE")
+        alert_code = config.env("SMS_TEMPLATE_CODE_ALERT")
+        if admin_phone and alert_code:
+            out["admin_sms"] = sms_notifier.send(
+                admin_phone,
+                {
+                    "name": _short(firm_name, 12),
+                    "reason": _short(result.get("message", "未知原因"), 20),
+                    "time": datetime.now().strftime("%m-%d %H:%M"),
+                },
+                template_code=alert_code,
+            )
+        elif admin_phone and not alert_code:
+            out["admin_sms"] = (False, "未配置 SMS_TEMPLATE_CODE_ALERT（失败告警模板）")
     return out
 
 
@@ -81,4 +102,19 @@ def notify_exception(text: str) -> dict:
       <h2 style="color:#991b1b">RepostBot 运行异常</h2>
       <pre style="white-space:pre-wrap;font-size:13px;color:#333">{text}</pre>
     </div></body></html>"""
-    return {"email": email_notifier.send("[告警] RepostBot 运行异常", html, admin)}
+    out = {"email": email_notifier.send("[告警] RepostBot 运行异常", html, admin)}
+
+    # 同样给管理员发短信，保证异常第一时间被看到
+    admin_phone = config.env("ADMIN_PHONE")
+    alert_code = config.env("SMS_TEMPLATE_CODE_ALERT")
+    if admin_phone and alert_code:
+        out["admin_sms"] = sms_notifier.send(
+            admin_phone,
+            {
+                "name": "RepostBot",
+                "reason": _short(text, 20),
+                "time": datetime.now().strftime("%m-%d %H:%M"),
+            },
+            template_code=alert_code,
+        )
+    return out

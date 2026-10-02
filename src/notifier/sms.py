@@ -3,7 +3,10 @@
 前置条件（缺一不可）：
   1. 阿里云账号已企业实名认证
   2. 短信签名已审核通过        -> SMS_SIGN_NAME
-  3. 短信模板已审核通过        -> SMS_TEMPLATE_CODE
+  3. 短信模板已审核通过：
+     客户成功回执 -> SMS_TEMPLATE_CODE        变量：${time} ${nexttime}
+     管理员失败告警 -> SMS_TEMPLATE_CODE_ALERT 变量：${name} ${reason} ${time}
+  4. 管理员手机号              -> ADMIN_PHONE
 凭证来源（两种，自动识别）：
   1. 长期 AccessKey      -> 环境变量 ALIBABA_CLOUD_ACCESS_KEY_ID / SECRET（本机、CI）
   2. RAM 角色临时凭证 STS -> 额外有 ALIBABA_CLOUD_SECURITY_TOKEN（**阿里云 FC 推荐**，
@@ -18,10 +21,14 @@ import json
 import config
 
 
-def send(phone: str, params: dict) -> tuple[bool, str]:
-    """发送模板短信，params 需与模板变量一一对应"""
+def send(phone: str, params: dict, template_code: str | None = None) -> tuple[bool, str]:
+    """发送模板短信，params 需与模板变量一一对应。
+
+    template_code：不传时用 SMS_TEMPLATE_CODE（客户成功回执模板）；
+    传 ADMIN 告警时请用 SMS_TEMPLATE_CODE_ALERT（失败告警模板）。
+    """
     sign = config.env("SMS_SIGN_NAME")
-    code = config.env("SMS_TEMPLATE_CODE")
+    code = template_code or config.env("SMS_TEMPLATE_CODE")
     ak = config.env("ALIBABA_CLOUD_ACCESS_KEY_ID")
     sk = config.env("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
 
