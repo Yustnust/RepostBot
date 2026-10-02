@@ -13,6 +13,23 @@ from email.mime.text import MIMEText
 import config
 
 
+def _sender_address(user: str, host: str) -> str:
+    """发件人地址。
+
+    163 等邮箱要求 From 必须是**完整邮箱地址**且等于登录账号，
+    只写用户名（如 zhizhe_2020）会被拒：550 Invalid User。
+    可用 SMTP_FROM 显式覆盖。
+    """
+    override = config.env("SMTP_FROM")
+    if override:
+        return override
+    if "@" in user:
+        return user
+    # smtp.163.com -> 163.com
+    domain = host.split("smtp.", 1)[-1] if "smtp." in host else host
+    return f"{user}@{domain}"
+
+
 def send(subject: str, html: str, to: str | None = None) -> tuple[bool, str]:
     """发送一封 HTML 邮件，返回 (是否成功, 说明)"""
     host = config.env("SMTP_HOST")
@@ -24,15 +41,17 @@ def send(subject: str, html: str, to: str | None = None) -> tuple[bool, str]:
     if not (host and user and pwd and recipient):
         return False, "邮件未配置（SMTP_HOST/SMTP_USER/SMTP_PASS/NOTIFY_EMAIL 缺失）"
 
+    sender = _sender_address(user, host)
     msg = MIMEText(html, "html", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = user
+    msg["From"] = sender
     msg["To"] = recipient
 
     try:
         with smtplib.SMTP_SSL(host, port, timeout=30) as smtp:
             smtp.login(user, pwd)
-            smtp.sendmail(user, [recipient], msg.as_string())
+            # 信封发件人也要用完整地址，否则 163 报 550 Invalid User
+            smtp.sendmail(sender, [recipient], msg.as_string())
         return True, f"已发送至 {recipient}"
     except Exception as e:  # noqa: BLE001
         return False, f"发送失败：{type(e).__name__}: {e}"

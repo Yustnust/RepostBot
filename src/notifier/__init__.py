@@ -39,20 +39,29 @@ def notify_result(result: dict, account: dict) -> dict:
 
     subject, html = email_notifier.render_result(result, firm_name, next_due)
 
-    if notify_cfg.get("email_enabled", True) and notify_cfg.get("email"):
-        out["email"] = email_notifier.send(subject, html, notify_cfg["email"])
-    elif config.env("NOTIFY_EMAIL"):
-        out["email"] = email_notifier.send(subject, html, config.env("NOTIFY_EMAIL"))
+    # 失败时默认**不打扰客户**，只通知管理员；
+    # 需要让客户也知道失败时，把 NOTIFY_CLIENT_ON_FAILURE 设为 true
+    failed = result.get("status") == "failed"
+    notify_client = True
+    if failed and not config.env_bool("NOTIFY_CLIENT_ON_FAILURE", False):
+        notify_client = False
+        out["email"] = (False, "失败：按配置不通知客户（NOTIFY_CLIENT_ON_FAILURE=false）")
+        out["sms"] = (False, "失败：按配置不通知客户")
 
-    if notify_cfg.get("sms_enabled") and notify_cfg.get("phone"):
-        params = {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "nexttime": next_due or "",
-        }
-        out["sms"] = sms_notifier.send(notify_cfg["phone"], params)
+    if notify_client:
+        if notify_cfg.get("email_enabled", True) and notify_cfg.get("email"):
+            out["email"] = email_notifier.send(subject, html, notify_cfg["email"])
+        elif config.env("NOTIFY_EMAIL"):
+            out["email"] = email_notifier.send(subject, html, config.env("NOTIFY_EMAIL"))
 
-    # 失败时额外告警给管理员
-    if result.get("status") == "failed":
+        if notify_cfg.get("sms_enabled") and notify_cfg.get("phone"):
+            params = {
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "nexttime": next_due or "",
+            }
+            out["sms"] = sms_notifier.send(notify_cfg["phone"], params)
+
+    if failed:
         admin = config.env("ADMIN_EMAIL")
         if admin:
             out["admin_email"] = email_notifier.send(
