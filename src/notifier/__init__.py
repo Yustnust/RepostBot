@@ -60,12 +60,13 @@ def notify_result(result: dict, account: dict) -> dict:
         elif config.env("NOTIFY_EMAIL"):
             out["email"] = email_notifier.send(subject, html, config.env("NOTIFY_EMAIL"))
 
-        if notify_cfg.get("sms_enabled") and notify_cfg.get("phone"):
+        phone = notify_cfg.get("phone") or config.env("NOTIFY_PHONE")
+        if notify_cfg.get("sms_enabled") and phone:
             params = {
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "nexttime": next_due or "",
             }
-            out["sms"] = sms_notifier.send(notify_cfg["phone"], params)
+            out["sms"] = sms_notifier.send(phone, params)
 
     if failed:
         admin = config.env("ADMIN_EMAIL")
