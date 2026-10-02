@@ -103,6 +103,30 @@ def run_all(*, dry_run: bool, headless: bool, browser: str, force: bool,
     return results
 
 
+def _test_email(to: str | None = None) -> int:
+    """发送一封测试邮件，用于验证回执通道是否可用（不触发任何真实业务动作）"""
+    from notifier import email as email_notifier
+
+    recipient = to or config.env("ADMIN_EMAIL") or config.env("NOTIFY_EMAIL")
+    if not recipient:
+        print("未指定收件人：请配置 ADMIN_EMAIL / NOTIFY_EMAIL，或用 --to 指定")
+        return 1
+
+    sample = {
+        "status": "skipped",
+        "message": "这是一封配置测试邮件，用于验证回执通道（非真实执行结果）",
+        "sort_time_before": None,
+        "sort_time_after": None,
+        "days_since": None,
+    }
+    subject, html = email_notifier.render_result(sample, "（回执通道测试）", "—")
+    ok, info = email_notifier.send("[测试] RepostBot 回执通道验证", html, recipient)
+    print(f"收件人：{recipient}")
+    print(f"发件人：{email_notifier._sender_address(config.env('SMTP_USER'), config.env('SMTP_HOST'))}")
+    print(f"结果：{'成功' if ok else '失败'} - {info}")
+    return 0 if ok else 1
+
+
 def handler(event, context):  # noqa: ARG001
     """阿里云 FC 入口（定时触发器调用）"""
     results = run_all(
@@ -130,7 +154,13 @@ def main() -> int:
     parser.add_argument("--headful", action="store_true", help="显示浏览器窗口")
     parser.add_argument("--browser", default=None, choices=["chromium", "msedge", "chrome"])
     parser.add_argument("--trace", default=None, help="记录网络请求到指定文件")
+    parser.add_argument("--test-email", action="store_true",
+                        help="发送一封测试邮件验证回执通道（默认发给 ADMIN_EMAIL）")
+    parser.add_argument("--to", default=None, help="配合 --test-email 指定收件人")
     args = parser.parse_args()
+
+    if args.test_email:
+        return _test_email(args.to)
 
     browser = args.browser or config.env("BROWSER", "msedge" if sys.platform == "win32" else "chromium")
     results = run_all(
