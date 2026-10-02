@@ -23,6 +23,29 @@ DEFAULT_STATE = {"version": 1, "updated_at": None, "accounts": {}}
 HISTORY_KEEP = 20
 
 
+def env_fallback_accounts() -> dict[str, Any]:
+    """配置为空时的兜底：用环境变量拼出单账号（本机开发便利）。
+
+    两种存储实现共用：否则一旦填了 OSS_BUCKET 而 OSS 上还没 accounts.json，
+    就会变成「没有可用账号」而直接失败。
+    """
+    if not config.env("OA_USER"):
+        return json.loads(json.dumps(DEFAULT_ACCOUNTS))
+    return {"version": 1, "accounts": [{
+        "id": config.env("FIRM_ID", "firm_a"),
+        "name": config.env("FIRM_NAME", "默认律所"),
+        "enabled": True,
+        "oa_user_ref": "env:OA_USER",
+        "oa_pass_ref": "env:OA_PASS",
+        "notify": {
+            "email": config.env("NOTIFY_EMAIL"),
+            "phone": config.env("NOTIFY_PHONE"),
+            "email_enabled": bool(config.env("NOTIFY_EMAIL")),
+            "sms_enabled": bool(config.env("NOTIFY_PHONE")),
+        },
+    }]}
+
+
 class Storage:
     """存储接口"""
 
@@ -68,22 +91,7 @@ class LocalStorage(Storage):
     def load_accounts(self) -> dict[str, Any]:
         data = self._read_json(self.config_dir / "accounts.json", DEFAULT_ACCOUNTS)
         if not data.get("accounts"):
-            # 没有配置时，回退到环境变量里的单账号（本机开发便利）
-            user, pwd = config.env("OA_USER"), config.env("OA_PASS")
-            if user:
-                data = {"version": 1, "accounts": [{
-                    "id": config.env("FIRM_ID", "firm_a"),
-                    "name": config.env("FIRM_NAME", "默认律所"),
-                    "enabled": True,
-                    "oa_user_ref": "env:OA_USER",
-                    "oa_pass_ref": "env:OA_PASS",
-                    "notify": {
-                        "email": config.env("NOTIFY_EMAIL"),
-                        "phone": config.env("NOTIFY_PHONE"),
-                        "email_enabled": bool(config.env("NOTIFY_EMAIL")),
-                        "sms_enabled": False,
-                    },
-                }]}
+            data = env_fallback_accounts()
         return data
 
     def load_state(self) -> dict[str, Any]:
@@ -134,11 +142,14 @@ class OSSStorage(Storage):
     def load_accounts(self) -> dict[str, Any]:
         raw = self._get("accounts.json")
         if not raw:
-            return json.loads(json.dumps(DEFAULT_ACCOUNTS))
+            return env_fallback_accounts()
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
         except Exception:
             return json.loads(json.dumps(DEFAULT_ACCOUNTS))
+        if not data.get("accounts"):
+            return env_fallback_accounts()
+        return data
 
     def load_state(self) -> dict[str, Any]:
         raw = self._get("state.json")
