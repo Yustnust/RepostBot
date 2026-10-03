@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -43,6 +44,32 @@ def parse_sort_time(text: str) -> datetime | None:
     return None
 
 
+def parse_iso_dt(text: str | None) -> datetime | None:
+    """解析 ISO 时间串（storage 层写入的 _now_iso 格式，含 +08:00 时区）"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=CST)
+
+
+def consumed_recently(last_accept_at: str | None, now: datetime | None = None,
+                      guard_days: int = S.ACCEPT_RETRY_GUARD_DAYS) -> tuple[bool, int]:
+    """最近是否已经点过「确定」（纯逻辑，便于单测）。
+
+    防止同一周期二次消耗机会：见 S.ACCEPT_RETRY_GUARD_DAYS 的说明。
+    返回 (是否仍在保护窗口内, 距上次确认已过天数)；无法解析时返回 (False, -1)。
+    """
+    dt = parse_iso_dt(last_accept_at)
+    if not dt:
+        return False, -1
+    elapsed = ((now or now_cst()) - dt).days
+    return elapsed < guard_days, elapsed
+
+
 def should_repost(sort_dt: datetime, now: datetime | None = None,
                   interval_days: int = S.REPOST_INTERVAL_DAYS) -> bool:
     """是否已满置顶间隔（纯逻辑，便于单测）。
@@ -58,13 +85,44 @@ def _is_login_page(url: str) -> bool:
     return any(m in url for m in S.LOGIN_URL_MARKERS)
 
 
+def _wait_login_form(page, timeout_ms: int = 30000) -> bool:
+    """等登录表单出现。
+
+    不能只等 `#j_username`：站点已于 2026-10-03 迁移到 passport3 统一登录页
+    （字段变成 #username / #password），老选择器永远等不到，会白白耗掉超时时间。
+    这里逐个候选轮询，任一可见即算就位。
+    """
+    deadline = time.monotonic() + min(timeout_ms, 30000) / 1000
+    while time.monotonic() < deadline:
+        for sel in S.LOGIN_USERNAME_CANDIDATES:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() and loc.is_visible():
+                    return True
+            except Exception:
+                continue
+        page.wait_for_timeout(500)
+    return False
+
+
+def _wait_after_submit(page, timeout_ms: int = 25000) -> None:
+    """点了提交之后等登录真正完成。
+
+    旧实现只固定睡 1.5 秒就去看管理页，登录 POST 还没落地就被下一次 goto 打断，
+    表现就是「两个登录页都没成功」。这里改为等 URL 离开登录页（至多 25 秒）。
+    """
+    try:
+        page.wait_for_url(lambda url: not _is_login_page(url),
+                          timeout=min(timeout_ms, 25000))
+    except Exception:
+        pass
+    page.wait_for_timeout(1500)
+
+
 def _try_login(page, user: str, pwd: str, timeout_ms: int = 20000) -> bool:
     """在当前页面尝试填表登录（页面需已停在登录页）"""
     # 登录页加载较慢（站点部分静态资源被墙），先等表单出现再填
-    try:
-        page.wait_for_selector(S.LOGIN_USERNAME, timeout=timeout_ms)
-    except Exception:
-        pass
+    _wait_login_form(page, timeout_ms)
     filled = 0
     for sel in S.LOGIN_USERNAME_CANDIDATES:
         loc = page.locator(sel).first
@@ -87,11 +145,7 @@ def _try_login(page, user: str, pwd: str, timeout_ms: int = 20000) -> bool:
                 _click(loc, timeout=8000)   # 被遮罩拦截时自动退化为 JS 点击
             except Exception:
                 continue
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=20000)
-            except Exception:
-                pass
-            page.wait_for_timeout(1500)
+            _wait_after_submit(page, timeout_ms)
             return True
     return False
 
@@ -119,28 +173,39 @@ def _manager_ready(page, timeout_ms: int) -> bool:
 
 
 def ensure_login(page, user: str, pwd: str, timeout_ms: int) -> tuple[bool, str]:
-    """保证进入招聘管理页。先试复用登录态，失败则依次尝试两个登录页。"""
+    """保证进入招聘管理页。先试复用登录态，失败则依次尝试登录页（最多 2 轮）。"""
     if _manager_ready(page, timeout_ms):
         return True, "复用登录态"
 
     if not (user and pwd):
         return False, "登录态失效，且未配置账号密码（OA_USER / OA_PASS）"
 
-    # 实测（2026-09-28）：OA 登录页的会话不覆盖 recruitment 子域，
-    # 生效的是统一登录页 openid/login.jsp，故把它排在最前
-    for url in (S.OPENID_LOGIN_URL, S.LOGIN_URL):
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-        except Exception:
-            continue
-        page.wait_for_timeout(1000)
-        if not _try_login(page, user, pwd):
-            continue
-        page.wait_for_timeout(1500)
-        if _manager_ready(page, timeout_ms):
-            return True, f"自动登录成功（{url}）"
+    # 入口顺序（2026-10-03 入口巡检实测）：
+    #   1) openid  —— 招聘后台的单点登录入口，会 302 到 passport3，已验证可用
+    #   2) passport3 —— 直接打终点，省一次跳转（openid 抽风时的退路）
+    #   3) OA 登录页 —— 注意它的会话**不覆盖** recruitment 子域（2026-09-28 实测），
+    #                   仅作最后兜底，别指望它。
+    # 另：站点偶发「表单还没渲染完 / 登录请求被打断」，所以整体再试一轮。
+    last_url = page.url
+    for round_no in (1, 2):
+        for url in (S.OPENID_LOGIN_URL, S.PASSPORT_LOGIN_URL, S.LOGIN_URL):
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            except Exception:
+                continue
+            page.wait_for_timeout(1000)
+            last_url = page.url
+            if not _try_login(page, user, pwd):
+                continue
+            if _manager_ready(page, timeout_ms):
+                return True, f"自动登录成功（{url}）"
+            last_url = page.url
+        if round_no == 1:
+            log.warning("[登录] 第一轮未成功，重试一轮（最后停在：%s）", last_url)
 
-    return False, "自动登录失败：两个登录页均未成功，请人工检查账号密码或重新生成登录态"
+    return False, ("自动登录失败：两个登录页均未成功，最后停在 "
+                   f"{last_url}。请检查账号密码 / 是否出现验证码，"
+                   f"或运行 python tools/diag_login.py 看现场截图")
 
 
 def _wait_ready(page, timeout_ms: int = 15000) -> None:
@@ -153,6 +218,33 @@ def _wait_ready(page, timeout_ms: int = 15000) -> None:
         )
     except Exception:
         pass
+
+
+def _build_trace(responses: list, markers: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """把收集到的 Response 序列化成抓包记录（含响应体，用于评估 HTTP 直调）。
+
+    必须在浏览器关闭前调用：对象一旦销毁，响应体就取不到了。
+    """
+    out: list[dict[str, Any]] = []
+    pending_markers = sorted(markers, key=lambda m: m[0])
+    for i, resp in enumerate(responses):
+        while pending_markers and pending_markers[0][0] <= i:
+            out.append({"marker": pending_markers.pop(0)[1]})
+        item: dict[str, Any] = {
+            "method": resp.request.method,
+            "url": resp.request.url,
+            "post_data": resp.request.post_data,
+            "status": resp.status,
+            "content_type": (resp.headers or {}).get("content-type", ""),
+        }
+        try:
+            item["body"] = resp.text()[: S.TRACE_BODY_LIMIT]
+        except Exception:
+            item["body"] = None
+        out.append(item)
+    while pending_markers:
+        out.append({"marker": pending_markers.pop(0)[1]})
+    return out
 
 
 def _click(locator, timeout: int = 10000) -> None:
@@ -208,6 +300,8 @@ def run(
     timeout_ms: int = 60000,
     ignore_interval: bool = False,
     trace_path: str | None = None,
+    recent_accept_at: str | None = None,
+    guard_days: int | None = None,
 ) -> dict[str, Any]:
     """执行单个律所账号的置顶流程。
 
@@ -215,6 +309,8 @@ def run(
     on_auth    : 回写登录态的回调
     ignore_interval : 仅供测试链路用，跳过 20 天判断（与 dry_run 搭配才安全）
     trace_path : 记录网络请求，用于抓取「更新排序时间」的真实接口
+    recent_accept_at : 上一次点击「确定」的时间（state.accounts.<firm>.last_accept_at），
+                       用于避免同一周期重复消耗置顶机会；不需要保护时传 None
 
     返回 dict：status ∈ {success, skipped, failed}
     """
@@ -228,6 +324,7 @@ def run(
         "dialog": None,
         "dry_run": dry_run,
         "row_selected": False,
+        "accepted": False,
     }
 
     log.info("[开始] firm=%s dry_run=%s", firm_id, dry_run)
@@ -271,22 +368,29 @@ def run(
         page.set_default_timeout(timeout_ms)
         page.on("dialog", on_dialog)
 
-        requests: list[dict[str, Any]] = []
+        responses: list[Any] = []      # 抓到的 Response 对象（真正的读写留到最后）
+        markers: list[tuple[int, str]] = []   # (落在第几个响应之后, 标记名)
         if trace_path:
-            def on_request(req):
+            def on_response(resp):
+                """筛选并记录候选响应，供最后统一落盘。
+
+                只留 XHR / fetch / POST——静态资源（图片/css/js）会淹没日志。
+                注意：**回调里不能调用 Playwright 的同步 API**（读响应体那种），
+                sync API 在事件回调里可能死锁。这里只收集对象，读数放到 outside。
+                """
                 try:
-                    requests.append({
-                        "method": req.method,
-                        "url": req.url,
-                        "post_data": req.post_data,
-                    })
+                    req = resp.request
+                    if req.resource_type not in ("xhr", "fetch") and req.method != "POST":
+                        return
+                    responses.append(resp)
                 except Exception:
                     pass
-            page.on("request", on_request)
+            page.on("response", on_response)
 
         try:
             ok, login_note = ensure_login(page, user, pwd, timeout_ms)
             result["login"] = login_note
+            result["auth_reused"] = (login_note == "复用登录态")
             if not ok:
                 result["message"] = (
                     f"{login_note}（firm={firm_id}）。"
@@ -294,7 +398,13 @@ def run(
                 )
                 log.error("[结束] firm=%s %s", firm_id, result["message"])
                 return result
-            log.info("[登录] firm=%s %s", firm_id, login_note)
+            log.info("[登录] firm=%s %s auth_reused=%s", firm_id, login_note,
+                     result["auth_reused"])
+            if auth_state and not result["auth_reused"]:
+                # 带了登录态却失效被迫重登：可能是会话过期，也可能 passport3 又改版。
+                # 这是用户要的「早报警」信号——频繁出现就说明站点有变。
+                log.warning("[登录态] firm=%s 保存的登录态已失效，已重新登录"
+                           "（频繁出现可能意味着 passport3 改版或会话过期，请关注）", firm_id)
 
             page.wait_for_selector(S.GRID_ROW, timeout=timeout_ms)
             rows = scan_rows(page)
@@ -334,15 +444,34 @@ def run(
             if days < S.REPOST_INTERVAL_DAYS:
                 result["message"] = f"（测试模式：距上次置顶仅 {days} 天，仍继续验证链路）"
 
+            # --- 防重复消耗：真实执行前最后一道闸 --------------------------
+            # 已经点过「确定」却判定失败时，绝不能在保护窗口内再点第二次
+            if not dry_run:
+                guard = guard_days if guard_days is not None else S.ACCEPT_RETRY_GUARD_DAYS
+                blocked, elapsed = consumed_recently(recent_accept_at, guard_days=guard)
+                if blocked:
+                    result["status"] = "skipped"
+                    result["message"] = (
+                        f"距上次确认点击仅 {elapsed} 天（< {guard} 天），"
+                        f"为避免同一周期二次消耗置顶机会，本次不点击，请人工复核当前排序时间"
+                    )
+                    log.warning("[保护] firm=%s %s", firm_id, result["message"])
+                    return result
+
             _wait_ready(page)
             # 选中目标行（即使按钮不依赖选中，也先选上，保证作用于正确的岗位）
             _click(page.locator(S.GRID_ROW).nth(target["index"]))
             page.wait_for_timeout(500)
             result["row_selected"] = page.locator(S.GRID_ROW_SELECTED).count() > 0
 
+            # 抓包里留个标记，便于分辨「点击前 / 点击后」的请求
+            if trace_path:
+                markers.append((len(responses), "click-update-sort-time"))
+
             _click(page.locator(S.BTN_UPDATE_SORT_TIME), timeout=15000)
             page.wait_for_timeout(1500)
             result["dialog"] = dialog_box or None
+            result["accepted"] = dialog_box.get("action") == "accept"
 
             if dry_run:
                 result["status"] = "skipped"
@@ -375,12 +504,15 @@ def run(
             try:
                 if on_auth:
                     on_auth(json.dumps(context.storage_state(), ensure_ascii=False))
-            except Exception:
-                pass
-            if trace_path and requests:
+            except Exception as e:  # noqa: BLE001
+                # 回写失败 = 下次被迫重新登录，等于多一次接触登录页的机会（更易被改版命中）
+                log.warning("[登录态] firm=%s 回写失败，下次运行将重新登录：%s",
+                            firm_id, e)
+            if trace_path:
                 try:
                     with open(trace_path, "w", encoding="utf-8") as f:
-                        json.dump(requests, f, ensure_ascii=False, indent=2)
+                        json.dump(_build_trace(responses, markers), f,
+                                  ensure_ascii=False, indent=2)
                 except Exception:
                     pass
             br.close()

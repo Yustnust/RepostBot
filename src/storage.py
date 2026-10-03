@@ -178,7 +178,15 @@ def _now_iso() -> str:
 
 
 def get_storage() -> Storage:
-    """按环境变量选择实现：配了 OSS_BUCKET 就用 OSS，否则本机文件"""
+    """选择存储实现。
+
+    默认：配了 OSS_BUCKET 就用 OSS，否则本机文件。
+    可用 STORAGE_BACKEND=local|oss 强制指定（本地调试、排障时用得上：
+    比如在 OSS 上验证新逻辑前，先用本机文件跑一遍）。
+    """
+    backend = config.env("STORAGE_BACKEND").lower()
+    if backend == "local":
+        return LocalStorage()
     bucket = config.env("OSS_BUCKET")
     endpoint = config.env("OSS_ENDPOINT") or f"https://oss-{config.env('OSS_REGION', 'cn-shanghai')}.aliyuncs.com"
     if bucket:
@@ -203,7 +211,17 @@ def record_run(state: dict[str, Any], firm_id: str, result: dict[str, Any]) -> d
         if acc["fail_count"] >= 3:
             acc["auto_disabled"] = True
 
+    # 点击「确定」即视为消耗了本周期的机会（哪怕随后判定为失败）。
+    # publisher 的防重复消耗保护依赖这个字段：保护窗口内不再二次点击。
+    if result.get("accepted"):
+        acc["last_accept_at"] = _now_iso()
+
     history = acc.setdefault("history", [])
     history.append({"at": _now_iso(), "status": result.get("status"), "message": result.get("message")})
     acc["history"] = history[-HISTORY_KEEP:]
     return state
+
+
+def last_accept_at(state: dict[str, Any], firm_id: str) -> str | None:
+    """上次点击「确定」的时间（用于防重复消耗保护）"""
+    return (state.get("accounts", {}).get(firm_id) or {}).get("last_accept_at")

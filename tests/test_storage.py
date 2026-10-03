@@ -47,6 +47,25 @@ class TestRecordRun(unittest.TestCase):
         self.assertEqual(state["accounts"]["firm_a"]["fail_count"], 0)
         self.assertNotIn("auto_disabled", state["accounts"]["firm_a"])
 
+    def test_accepted_records_last_accept_at(self):
+        """点了「确定」就算消耗机会，即使随后判定为失败也要留下时间戳"""
+        state = self._base_state()
+        storage.record_run(
+            state, "firm_a",
+            {"status": "failed", "accepted": True, "message": "排序时间未变化"},
+        )
+        acc = state["accounts"]["firm_a"]
+        self.assertTrue(acc.get("last_accept_at"))
+        self.assertEqual(storage.last_accept_at(state, "firm_a"), acc["last_accept_at"])
+
+    def test_not_accepted_leaves_no_accept_at(self):
+        state = self._base_state()
+        storage.record_run(state, "firm_a", {"status": "success",
+                                             "sort_time_after": "2026-09-27 09:00",
+                                             "message": "ok"})
+        self.assertIsNone(storage.last_accept_at(state, "firm_a"))
+        self.assertIsNone(storage.last_accept_at(state, "不存在的律所"))
+
     def test_history_capped_at_20(self):
         state = self._base_state()
         for i in range(25):

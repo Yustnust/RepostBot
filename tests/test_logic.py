@@ -90,5 +90,87 @@ class TestShouldRepost(unittest.TestCase):
         self.assertFalse(publisher.should_repost(sort_dt, now, 20))
 
 
+class TestConsumedRecently(unittest.TestCase):
+    """防重复消耗：同一 20 天周期里绝不点第二次「确定」"""
+
+    def test_blocked_within_guard_window(self):
+        # 10-14 09:05 点过确定，10-16 09:00 只过了 1 个整天 → 仍在保护窗口
+        now = datetime(2026, 10, 16, 9, 0, tzinfo=CST)
+        blocked, elapsed = publisher.consumed_recently("2026-10-14T09:05:00+08:00", now, 3)
+        self.assertTrue(blocked)
+        self.assertEqual(elapsed, 1)
+
+    def test_allowed_after_guard_window(self):
+        now = datetime(2026, 10, 20, 9, 0, tzinfo=CST)
+        blocked, elapsed = publisher.consumed_recently("2026-10-14T09:05:00+08:00", now, 3)
+        self.assertFalse(blocked)
+        self.assertEqual(elapsed, 5)
+
+    def test_guard_boundary_exactly_guard_days(self):
+        # 正好满 guard_days：解除保护（与 20 天判定口径一致，差一分钟都不行）
+        now = datetime(2026, 10, 17, 9, 6, tzinfo=CST)
+        blocked, elapsed = publisher.consumed_recently("2026-10-14T09:05:00+08:00", now, 3)
+        self.assertFalse(blocked)
+        self.assertEqual(elapsed, 3)
+
+    def test_no_record_never_blocks(self):
+        for raw in (None, "", "不是时间"):
+            blocked, elapsed = publisher.consumed_recently(raw)
+            self.assertFalse(blocked)
+            self.assertEqual(elapsed, -1)
+
+    def test_naive_iso_treated_as_cst(self):
+        now = datetime(2026, 10, 15, 9, 0, tzinfo=CST)
+        blocked, _ = publisher.consumed_recently("2026-10-14T09:05:00", now, 3)
+        self.assertTrue(blocked)
+
+
+class _FakeRequest:
+    method = "POST"
+    url = "https://recruitment.lawyers.org.cn/manager/updateSortTime.jsp"
+    post_data = "id=123"
+
+
+class _FakeResponse:
+    request = _FakeRequest()
+    status = 200
+    headers = {"content-type": "application/json"}
+
+    def text(self):
+        return '{"success":true}'
+
+
+class TestBuildTrace(unittest.TestCase):
+    """抓包序列化：含响应体，并按位置插入「点击」标记"""
+
+    def test_serializes_and_inserts_marker(self):
+        trace = publisher._build_trace([_FakeResponse()], [(0, "click")])
+        self.assertEqual(trace[0], {"marker": "click"})
+        self.assertEqual(trace[1]["status"], 200)
+        self.assertEqual(trace[1]["body"], '{"success":true}')
+
+    def test_body_failure_is_tolerated(self):
+        class Boom(_FakeResponse):
+            def text(self):
+                raise RuntimeError("boom")
+        trace = publisher._build_trace([Boom()], [])
+        self.assertIsNone(trace[0]["body"])
+
+    def test_trailing_marker_kept(self):
+        trace = publisher._build_trace([_FakeResponse()], [(9, "click")])
+        self.assertEqual(trace[-1], {"marker": "click"})
+
+
+class TestParseIsoDt(unittest.TestCase):
+    def test_with_offset(self):
+        dt = publisher.parse_iso_dt("2026-10-14T09:05:00+08:00")
+        self.assertEqual(dt.hour, 9)
+
+    def test_invalid(self):
+        self.assertIsNone(publisher.parse_iso_dt(""))
+        self.assertIsNone(publisher.parse_iso_dt(None))
+        self.assertIsNone(publisher.parse_iso_dt("2026/10/14 09:05"))
+
+
 if __name__ == "__main__":
     unittest.main()

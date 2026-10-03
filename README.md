@@ -53,11 +53,15 @@ python tools/recon.py
 │   ├── logger.py            # 统一日志（控制台 + logs/repostbot.log）
 │   └── notifier/            # 邮件 + 短信回执
 ├── tools/
-│   └── recon.py             # 阶段1 勘察工具
+│   ├── recon.py             # 阶段1 勘察工具
+│   ├── init_oss.py          # 一键上传/回读 OSS 三件套
+│   ├── diag_login.py        # 登录链路诊断（登录失败时必用）
+│   └── probe_api.py         # 接口探针：从页面 JS 找真实接口（只读，不点按钮）
 ├── tests/                   # 纯逻辑单测（python -m unittest discover -s tests）
 ├── .github/workflows/       # push main → 构建镜像 → 部署 FC
 └── docs/
-    ├── 页面结构.md           # 页面结构与选择器
+    ├── 页面结构.md           # 页面结构、选择器 + §6 真实接口（HTTP 直调依据）
+    ├── 首次发布清单.md        # ★ 2026-10-14 首次真实发布的操作清单
     ├── 阶段1-2总结.md        # 已完成工作的总结与踩坑记录
     ├── 部署手册.md           # 阿里云 FC 部署步骤
     └── 进度对账.md           # 阶段进度权威状态表（README 与方案冲突以它为准）
@@ -99,10 +103,31 @@ python src/index.py --firm firm_a --browser msedge --live
 # 登录态失效时重新生成
 python tools/recon.py --firm firm_a --browser msedge
 
+# 配置体检（不启浏览器、不产生真实动作，发布前先跑）
+python src/index.py --doctor
+
 # 验证邮件回执通道（默认发给 ADMIN_EMAIL，可用 --to 指定）
 python src/index.py --test-email
 python src/index.py --test-email --to someone@example.com
+
+# 验证短信通道（默认发给 ADMIN_PHONE）
+python src/index.py --test-sms
+python src/index.py --test-sms --to 13800000000
+
+# 登录失败排障：控制台 reasons + logs/diag_<时间戳>/ 下的截图与 HTML
+python tools/diag_login.py
+
+# 登录入口巡检：空 cookie 逐个打开常见入口，看各入口最终落在哪个登录页
+python tools/diag_login.py --entries
+python tools/diag_login.py --url https://www.lawyers.org.cn/openid/login.jsp
+
+# 接口探针：读页面 JS，找「更新排序时间」背后的接口（只读，绝不点击按钮）
+python tools/probe_api.py
+python tools/probe_api.py --url https://passport3.lawyers.org.cn/login.jsp
 ```
+
+> 排障时可强制本机存储：`$env:STORAGE_BACKEND="local"`
+> （注意 PowerShell 里 `$env:X=""` 是**删除**变量，不是设为空。）
 
 > `--browser msedge` 是必需的：Playwright 自带 Chromium 打不开该站点。
 

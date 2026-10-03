@@ -62,23 +62,30 @@ BTN_REFRESH = 'button:has-text("刷新")'
 LOGIN_URL = "https://oa.lawyers.org.cn/login.jsp"
 OPENID_LOGIN_URL = "https://www.lawyers.org.cn/openid/login.jsp"  # 招聘后台的单点登录入口
 
+# 2026-10-03 实测：上面两个地址现在都会**跳转**到这里（站点升级了统一登录），
+# 表单选择器也随之改变：#username / #password / button「立即登录」。
+# 旧的 #j_username / button.btn.btn-success.btn-block 只作兜底保留。
+PASSPORT_LOGIN_URL = "https://passport3.lawyers.org.cn/login.jsp"
+
 LOGIN_USERNAME = "#j_username"
 LOGIN_PASSWORD = "#j_password"
 LOGIN_SUBMIT = "button.btn.btn-success.btn-block"
 
+LOGIN_USERNAME_ALT = "#username"
+LOGIN_PASSWORD_ALT = "#password"
+LOGIN_SUBMIT_ALT = 'button:has-text("立即登录")'
+
 # 登录态失效时才走账号密码登录：先试上面确认过的，不行再逐个兜底
 LOGIN_USERNAME_CANDIDATES = [
-    LOGIN_USERNAME,
-    'input[name="j_username"]', 'input[name="username"]', 'input#username',
-    'input[type="text"]',
+    LOGIN_USERNAME_ALT, 'input[name="username"]',
+    LOGIN_USERNAME, 'input[name="j_username"]', 'input[type="text"]',
 ]
 LOGIN_PASSWORD_CANDIDATES = [
-    LOGIN_PASSWORD,
-    'input[name="j_password"]', 'input[name="password"]', 'input#password',
-    'input[type="password"]',
+    LOGIN_PASSWORD_ALT, 'input[name="password"]',
+    LOGIN_PASSWORD, 'input[name="j_password"]', 'input[type="password"]',
 ]
 LOGIN_SUBMIT_CANDIDATES = [
-    LOGIN_SUBMIT,
+    LOGIN_SUBMIT, LOGIN_SUBMIT_ALT,
     'button:has-text("登录")', 'button[type="submit"]', 'input[type="submit"]',
     'text=登录',
 ]
@@ -90,6 +97,16 @@ LOGIN_URL_MARKERS = ("login.jsp", "passport", "loginSuccessUrl")
 REPOST_INTERVAL_DAYS = 20            # 满 20 天才能再次置顶
 STATUS_RECRUITING = "招聘中"           # 列表「状态」列的有效值
 SORT_TIME_FORMAT = "%Y-%m-%d %H:%M"  # 排序时间格式，如 2026-09-24 09:34
+
+# 「防重复消耗」保护窗口（天）。
+# 背景：确认框一旦点了「确定」，本周期的机会就消耗了；若随后复核读到的排序时间
+# 因异步延迟/缓存没有变化，我们只能判定 failed。此时第二天若照常再点一次，
+# 很可能在同一周期内第二次消耗机会（站点规则：20 天只有 1 次）。
+# 因此：**已确认点击后，GUARD 天内一律不再点击**，改由人工复核。
+ACCEPT_RETRY_GUARD_DAYS = 3
+
+# 抓包（--trace）记录返回体的最大长度，避免日志文件过大
+TRACE_BODY_LIMIT = 2000
 
 # 点按钮后弹出的原生 confirm 文本特征，用于确认点对了按钮、没有误触别的操作
 CONFIRM_TEXT_KEYWORD = "更新排序时间"
