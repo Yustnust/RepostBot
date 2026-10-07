@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -169,6 +170,14 @@ class OSSStorage(Storage):
 
     def save_auth(self, firm_id: str, data: str) -> None:
         self._put(f"auth/{firm_id}.json", data)
+        # 同时写本地 .auth/<firm>.json 做备份：便于 init_oss.py 上传、
+        # 以及本机排障 / FC 日志缺失时回看。本地写失败不应影响 OSS 主路径。
+        try:
+            auth_dir = config.REPO_ROOT / ".auth"
+            auth_dir.mkdir(parents=True, exist_ok=True)
+            (auth_dir / f"{firm_id}.json").write_text(data, encoding="utf-8")
+        except Exception as e:
+            logging.getLogger(__name__).warning("本地登录态备份失败（不影响 OSS）：%s", e)
 
 
 def _now_iso() -> str:
