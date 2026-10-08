@@ -46,7 +46,8 @@ python tools/recon.py
 │   ├── accounts.example.json  # 账号配置样例
 │   └── state.example.json     # 运行状态样例
 ├── src/                     # 主程序
-│   ├── index.py             # 入口（CLI + FC handler）
+│   ├── index.py             # 入口（CLI 的 main() + FC 的 handler()）
+│   ├── bootstrap.py         # FC 容器入口：监听 9000，把调用转给 index.handler
 │   ├── publisher.py         # 核心发布流程
 │   ├── page_selectors.py    # 所有页面选择器（页面改版只改这里）
 │   ├── storage.py           # 存储：本地文件 / 阿里云 OSS
@@ -83,8 +84,8 @@ python tools/recon.py
 | 3 状态存储 | `storage.py`（本地 + OSS、状态记录、失败自动停用） | ✅ 完成 |
 | 3 多账号调度 | 限流 / 排序 / 串行（单客户暂不需要） | ⏸ 暂缓 |
 | 4 邮件 / 短信回执 | `notifier/` | ✅ 完成（代码已写） |
-| 5 容器化 + FC 上线 | `Dockerfile` / `deploy.yml` / 部署手册 | ⚠️ 半个（FC 运行需配 AK） |
-| 6 试运行观察 | 首个可实测日期 2026-10-14 | ⬜ |
+| 5 容器化 + FC 上线 | `Dockerfile` / `bootstrap.py` / `deploy.yml` / ACR + FC + 定时触发器 / 部署手册 | ✅ 完成（2026-10-08，云端演练模式已跑通） |
+| 6 试运行观察 | 首个可实测日期 2026-10-14 | ⏳ 10-14 起进入观察期 |
 
 > **v1 仅服务「上海臻至律师事务所」一家客户。** 多账号能力已通过 `accounts.json` 结构预留，暂不实现。
 
