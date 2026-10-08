@@ -49,20 +49,29 @@ jobs:
         run: |
           # 镜像推送后必须显式更新函数，FC 不会自动感知镜像变化
           # ⚠️ 1.3.1 从未发布过（曾因此流水线在最后一步挂掉）；用确实存在的 3.1.0
-          pip install --quiet alibabacloud-fc20230330==3.1.0
+          pip install --quiet alibabacloud-fc20230330==3.1.0 alibabacloud_sts20150401
           python - <<'PY'
           import os
           from alibabacloud_fc20230330.client import Client as FCClient
           from alibabacloud_fc20230330 import models as fc_models
+          from alibabacloud_sts20150401.client import Client as StsClient
           from alibabacloud_tea_openapi import models as open_api_models
 
-          cfg = open_api_models.Config(
-              access_key_id=os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"],
-              access_key_secret=os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"],
+          ak = os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"]
+          sk = os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"]
+
+          # FC 公网接入点官方格式（见 help.aliyun.com/zh/fc/developer-reference/endpoints）：
+          #   <主账号ID>.<region>.fc.aliyuncs.com
+          # 账号 ID 用 STS GetCallerIdentity 动态获取，无需新增 Secret
+          sts_cfg = open_api_models.Config(
+              access_key_id=ak,
+              access_key_secret=sk,
+              endpoint="sts.aliyuncs.com",
           )
-          # FC 3.0 公网接入点格式是 fc.<region>.aliyuncs.com，
-          # 写成 <region>.fc.aliyuncs.com 域名不存在，会在 DNS 解析阶段直接失败
-          cfg.endpoint = f"fc.{os.environ['ALIBABA_CLOUD_REGION_ID']}.aliyuncs.com"
+          account_id = StsClient(sts_cfg).get_caller_identity().body.account_id
+
+          cfg = open_api_models.Config(access_key_id=ak, access_key_secret=sk)
+          cfg.endpoint = f"{account_id}.{os.environ['ALIBABA_CLOUD_REGION_ID']}.fc.aliyuncs.com"
           client = FCClient(cfg)
           # 注意：tea 生成的 Python SDK 模型字段一律 snake_case，
           # 写成 customContainerConfig 会在运行时直接 TypeError
