@@ -60,7 +60,9 @@ jobs:
               access_key_id=os.environ["ALIBABA_CLOUD_ACCESS_KEY_ID"],
               access_key_secret=os.environ["ALIBABA_CLOUD_ACCESS_KEY_SECRET"],
           )
-          cfg.endpoint = f"{os.environ['ALIBABA_CLOUD_REGION_ID']}.fc.aliyuncs.com"
+          # FC 3.0 公网接入点格式是 fc.<region>.aliyuncs.com，
+          # 写成 <region>.fc.aliyuncs.com 域名不存在，会在 DNS 解析阶段直接失败
+          cfg.endpoint = f"fc.{os.environ['ALIBABA_CLOUD_REGION_ID']}.aliyuncs.com"
           client = FCClient(cfg)
           # 注意：tea 生成的 Python SDK 模型字段一律 snake_case，
           # 写成 customContainerConfig 会在运行时直接 TypeError
