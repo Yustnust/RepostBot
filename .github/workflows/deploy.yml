@@ -2,8 +2,10 @@ name: build-and-deploy
 
 # 推送到 main 时：构建镜像 -> 推送 ACR -> 更新阿里云 FC 函数镜像
 # 需要的 GitHub Secrets：
-#   ALIYUN_ACCESS_KEY_ID      RAM 子账号 AK（授权：ACR 推送 + FC 更新函数）
+#   ALIYUN_ACCESS_KEY_ID      RAM 子账号 AK（仅用于调用 FC OpenAPI 更新函数镜像）
 #   ALIYUN_ACCESS_KEY_SECRET
+#   ACR_USERNAME              ACR 个人版登录用户名（照抄 ACR 控制台"登录命令"示例里的 --username）
+#   ACR_PASSWORD              ACR 个人版固定密码（⚠️ 不是 AccessKey Secret！在 ACR 控制台设置）
 #   ACR_REGISTRY             例：registry.cn-shanghai.aliyuncs.com
 #   ACR_NAMESPACE            例：repostbot
 #   FC_REGION                例：cn-shanghai
@@ -25,8 +27,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.ACR_REGISTRY }}
-          username: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          password: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: 构建并推送镜像
         env:
