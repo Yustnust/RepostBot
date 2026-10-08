@@ -5,6 +5,6 @@
 playwright>=1.47
 python-dotenv>=1.0.1
 
-# 云端运行依赖
-oss2==2.18.4
+# 云端运行依赖（版本须与 Dockerfile 中 python -m pip install 的保持一致）
+oss2==2.19.1
 alibabacloud_dysmsapi20170525==3.1.0
