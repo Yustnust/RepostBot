@@ -1,7 +1,6 @@
 # ============================================================
 # RepostBot —— 东方律师网招聘信息「20 天自动重发置顶」机器人
-# 基础镜像已内置 playwright + chromium，无需再装浏览器（这是选它的唯一理由）
-# 若该标签不可用，请在 ACR 构建日志中查看可用标签，或改用 mcr.microsoft.com/playwright/python:latest
+# 基础镜像：mcr.microsoft.com/playwright/python（已内置 chromium 浏览器）
 # ============================================================
 FROM mcr.microsoft.com/playwright/python:v1.47.0-jammy
 
@@ -11,9 +10,19 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
 
-# 只装云端额外依赖；playwright 由基础镜像提供，重复安装可能覆盖镜像内的浏览器版本
 COPY requirements.txt .
-RUN pip install --no-cache-dir oss2==2.19.1 alibabacloud_dysmsapi20170525==3.1.0
+
+# ⚠️ 关键：必须用「与 CMD 同一个解释器」安装，否则运行时 import 不到 playwright
+#    （曾出现 FC 日志报 "未安装 playwright"，原因就是装的和跑的不是同一个 python）
+# playwright 锁 1.47.0：与基础镜像内已下载的 chromium 版本一致，避免重复下载浏览器
+RUN python -V \
+ && python -m pip install --no-cache-dir \
+        playwright==1.47.0 \
+        oss2==2.19.1 \
+        alibabacloud_dysmsapi20170525==3.1.0 \
+ && python -m playwright install chromium
+# 构建期自检：任一依赖装不上或 import 失败，构建直接红（不要拖到 FC 运行时才发现）
+RUN python -c "import playwright.sync_api, oss2; print('deps ok')"
 
 COPY src/ ./src/
 COPY config/ ./config/
