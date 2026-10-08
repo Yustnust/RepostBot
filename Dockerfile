@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir oss2==2.19.1 alibabacloud_dysmsapi20170525==3.1.0
 COPY src/ ./src/
 COPY config/ ./config/
 
-# 阿里云 FC 容器镜像入口在控制台配置：
-#   函数入口  = index.handler
-#   监听端口  = 9000（自定义运行时才需要；容器镜像选 WebServer 模式时设置）
-CMD ["python", "src/index.py"]
+# FC 事件函数 + 容器镜像要求容器内监听 9000 端口提供 HTTP 服务，
+# 定时触发器的调用由 bootstrap.py 转交给 index.handler（事件模型）。
+# 本机 CLI 仍用 python src/index.py 直跑 main()，不受影响。
+CMD ["python", "src/bootstrap.py"]
