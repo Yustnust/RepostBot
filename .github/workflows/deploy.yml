@@ -44,10 +44,12 @@ jobs:
           ALIBABA_CLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           ALIBABA_CLOUD_REGION_ID: ${{ secrets.FC_REGION }}
+          FC_FUNCTION_NAME: ${{ secrets.FC_FUNCTION_NAME }}
           IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/repostbot
         run: |
           # 镜像推送后必须显式更新函数，FC 不会自动感知镜像变化
-          pip install --quiet alibabacloud-fc20230330==1.3.1
+          # ⚠️ 1.3.1 从未发布过（曾因此流水线在最后一步挂掉）；用确实存在的 3.1.0
+          pip install --quiet alibabacloud-fc20230330==3.1.0
           python - <<'PY'
           import os
           from alibabacloud_fc20230330.client import Client as FCClient
@@ -60,9 +62,11 @@ jobs:
           )
           cfg.endpoint = f"{os.environ['ALIBABA_CLOUD_REGION_ID']}.fc.aliyuncs.com"
           client = FCClient(cfg)
+          # 注意：tea 生成的 Python SDK 模型字段一律 snake_case，
+          # 写成 customContainerConfig 会在运行时直接 TypeError
           req = fc_models.UpdateFunctionRequest(
               body=fc_models.UpdateFunctionInput(
-                  customContainerConfig=fc_models.CustomContainerConfig(
+                  custom_container_config=fc_models.CustomContainerConfig(
                       image=os.environ["IMAGE"] + ":latest"
                   )
               )
